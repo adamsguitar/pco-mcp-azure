@@ -32,3 +32,13 @@ ENV/
 .vscode/
 *.swp
 *.swo 
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl
+
+# macOS
+.DS_Store
