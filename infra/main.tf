@@ -58,7 +58,7 @@ resource "azurerm_container_app" "main" {
   template {
     container {
       name   = "app"
-      image  = "acrpcomcpprodeus.azurecr.io/ca-poc-mcp-prod:eac3cb9e252fcce8dd816f3fd62c22dcd840a610"
+      image  = "acrpcomcpprodeus.azurecr.io/ca-poc-mcp-prod:latest"
       cpu    = 0.5
       memory = "1Gi"
     }
