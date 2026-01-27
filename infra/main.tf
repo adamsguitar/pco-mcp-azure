@@ -39,6 +39,15 @@ resource "azurerm_container_app" "main" {
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
 
+  identity {
+    type = "SystemAssigned"
+  }
+
+  registry {
+    server   = azurerm_container_registry.main.login_server
+    identity = "System"
+  }
+
   template {
     container {
       name   = "app"
@@ -58,4 +67,10 @@ resource "azurerm_container_app" "main" {
       latest_revision = true
     }
   }
+}
+
+resource "azurerm_role_assignment" "container_app_acr_pull" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_container_app.main.identity[0].principal_id
 }
