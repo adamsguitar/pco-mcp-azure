@@ -12,6 +12,9 @@ env:
   AZURE_CONTAINERAPPS_ENVIRONMENT: ${{ vars.AZURE_CONTAINERAPPS_ENVIRONMENT }}
   AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
   AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+  TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+  TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+  TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
 
 jobs:
   build-and-deploy:
@@ -26,30 +29,46 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Ensure Azure resources exist
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Export ARM credentials for Terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ARM_CLIENT_ID=$(jq -r .clientId <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+          echo "ARM_CLIENT_SECRET=$(jq -r .clientSecret <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+          echo "ARM_TENANT_ID=$(jq -r .tenantId <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+          echo "ARM_SUBSCRIPTION_ID=$(jq -r .subscriptionId <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+          echo "AZURE_SUBSCRIPTION_ID=$(jq -r .subscriptionId <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+
+      - name: Bootstrap Terraform backend
         uses: azure/CLI@v2
         with:
           inlineScript: |
             set -euo pipefail
+            ./scripts/bootstrap-tf-backend.sh
 
-            az group create \
-              --name "$AZURE_RESOURCE_GROUP" \
-              --location "$AZURE_LOCATION" \
-              --output none
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${TF_STATE_RESOURCE_GROUP}" \
+            -backend-config="storage_account_name=${TF_STATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER}" \
+            -backend-config="key=terraform.tfstate"
 
-            az acr create \
-              --name "$AZURE_ACR_NAME" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --location "$AZURE_LOCATION" \
-              --sku Basic \
-              --admin-enabled false \
-              --output none
-
-            az containerapp env create \
-              --name "$AZURE_CONTAINERAPPS_ENVIRONMENT" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --location "$AZURE_LOCATION" \
-              --output none
+      - name: Terraform Apply
+        working-directory: infra
+        env:
+          TF_VAR_location: ${{ env.AZURE_LOCATION }}
+          TF_VAR_resource_group_name: ${{ env.AZURE_RESOURCE_GROUP }}
+          TF_VAR_acr_name: ${{ env.AZURE_ACR_NAME }}
+          TF_VAR_containerapps_environment_name: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
+          TF_VAR_container_app_name: ${{ env.AZURE_CONTAINER_APP_NAME }}
+        run: terraform apply -auto-approve
 
       - name: Build and deploy Container App
         uses: azure/container-apps-deploy-action@v2
