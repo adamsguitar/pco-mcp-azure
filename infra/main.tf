@@ -33,6 +33,12 @@ resource "azurerm_container_app_environment" "main" {
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 }
 
+resource "azurerm_user_assigned_identity" "container_app_acr_pull" {
+  name                = "${var.container_app_name}-acr-pull"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+}
+
 resource "azurerm_container_app" "main" {
   name                         = var.container_app_name
   resource_group_name          = azurerm_resource_group.main.name
@@ -40,18 +46,19 @@ resource "azurerm_container_app" "main" {
   revision_mode                = "Single"
 
   identity {
-    type = "SystemAssigned"
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.container_app_acr_pull.id]
   }
 
   registry {
     server   = azurerm_container_registry.main.login_server
-    identity = "System"
+    identity = azurerm_user_assigned_identity.container_app_acr_pull.id
   }
 
   template {
     container {
       name   = "app"
-      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+      image  = "acrpcomcpprodeus.azurecr.io/ca-poc-mcp-prod:eac3cb9e252fcce8dd816f3fd62c22dcd840a610"
       cpu    = 0.5
       memory = "1Gi"
     }
@@ -72,5 +79,5 @@ resource "azurerm_container_app" "main" {
 resource "azurerm_role_assignment" "container_app_acr_pull" {
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPull"
-  principal_id         = azurerm_container_app.main.identity[0].principal_id
+  principal_id         = azurerm_user_assigned_identity.container_app_acr_pull.principal_id
 }
