@@ -162,7 +162,8 @@ jobs:
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --secrets \
                 "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
-                "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}"
+                "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}" \
+                "mcp-api-key=${{ secrets.MCP_API_KEY }}"
 
             # Step 2: Update the container app with new image and env vars
             echo "Updating Container App..."
@@ -173,6 +174,7 @@ jobs:
               --set-env-vars \
                 "PCO_APPLICATION_ID=secretref:pco-application-id" \
                 "PCO_SECRET_KEY=secretref:pco-secret-key" \
+                "MCP_API_KEY=secretref:mcp-api-key" \
               --cpu 0.5 \
               --memory 1Gi
           else
@@ -190,9 +192,11 @@ jobs:
               --secrets \
                 "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
                 "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}" \
+                "mcp-api-key=${{ secrets.MCP_API_KEY }}" \
               --env-vars \
                 "PCO_APPLICATION_ID=secretref:pco-application-id" \
                 "PCO_SECRET_KEY=secretref:pco-secret-key" \
+                "MCP_API_KEY=secretref:mcp-api-key" \
               --cpu 0.5 \
               --memory 1Gi \
               --min-replicas 0 \

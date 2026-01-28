@@ -1,4 +1,7 @@
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
+from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_http_headers
 from pypco import PCO  # Import the PCO client
 import os
 from dotenv import load_dotenv
@@ -6,7 +9,33 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Simple API key authentication middleware
+class ApiKeyAuthMiddleware(Middleware):
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        api_key = os.getenv("MCP_API_KEY")
+
+        # Skip auth if no API key is configured
+        if not api_key:
+            return await call_next(context)
+
+        headers = get_http_headers()
+        auth_header = headers.get("authorization", "")
+
+        if not auth_header:
+            raise ToolError("Access denied: missing authorization header")
+
+        if not auth_header.startswith("Bearer "):
+            raise ToolError("Access denied: invalid authorization format")
+
+        token = auth_header.removeprefix("Bearer ").strip()
+
+        if token != api_key:
+            raise ToolError("Access denied: invalid API key")
+
+        return await call_next(context)
+
 mcp = FastMCP("PCO Services MCP Server")
+mcp.add_middleware(ApiKeyAuthMiddleware())
 
 # Initialize the PCO client with credentials from environment variables
 pco = PCO(
