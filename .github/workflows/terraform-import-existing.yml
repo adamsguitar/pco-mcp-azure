@@ -1,0 +1,117 @@
+name: Terraform Import Existing Resources (One-Time Setup)
+
+# This workflow is for one-time migration of existing Azure resources into Terraform state
+# Only run this manually when:
+# 1. First time setting up Terraform for existing infrastructure
+# 2. Adding new resources to Terraform config that already exist in Azure
+# 3. Recovering from state corruption (use with caution)
+#
+# DO NOT run this on every deployment - it's unnecessary and an anti-pattern
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "import" to confirm you want to import existing resources'
+        required: true
+        type: string
+
+env:
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_CONTAINERAPPS_ENVIRONMENT: ${{ vars.AZURE_CONTAINERAPPS_ENVIRONMENT }}
+  AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+  AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+  TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+  TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+  TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+
+jobs:
+  import-resources:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [[ "${{ github.event.inputs.confirm }}" != "import" ]]; then
+            echo "Error: You must type 'import' to confirm"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Export ARM credentials for Terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ARM_CLIENT_ID=$(jq -r .clientId <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+          echo "ARM_CLIENT_SECRET=$(jq -r .clientSecret <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+          echo "ARM_TENANT_ID=$(jq -r .tenantId <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+          echo "ARM_SUBSCRIPTION_ID=$(jq -r .subscriptionId <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+          echo "AZURE_SUBSCRIPTION_ID=$(jq -r .subscriptionId <<< '${{ secrets.AZURE_CREDENTIALS }}')" >> "$GITHUB_ENV"
+
+      - name: Bootstrap Terraform backend
+        uses: azure/CLI@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            ./scripts/bootstrap-tf-backend.sh
+
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${TF_STATE_RESOURCE_GROUP}" \
+            -backend-config="storage_account_name=${TF_STATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER}" \
+            -backend-config="key=terraform.tfstate"
+
+      - name: Show current Terraform state
+        working-directory: infra
+        run: |
+          echo "=== Current resources in Terraform state ==="
+          terraform state list || echo "State is empty or not initialized"
+
+      - name: Import existing Azure resources
+        working-directory: infra
+        env:
+          TF_VAR_location: ${{ env.AZURE_LOCATION }}
+          TF_VAR_resource_group_name: ${{ env.AZURE_RESOURCE_GROUP }}
+          TF_VAR_acr_name: ${{ env.AZURE_ACR_NAME }}
+          TF_VAR_containerapps_environment_name: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
+          TF_VAR_container_app_name: ${{ env.AZURE_CONTAINER_APP_NAME }}
+        run: |
+          echo "=== Importing existing resources into Terraform state ==="
+          ../scripts/tf-import-existing.sh
+
+      - name: Show updated Terraform state
+        working-directory: infra
+        run: |
+          echo "=== Resources after import ==="
+          terraform state list
+
+      - name: Verify Terraform plan after import
+        working-directory: infra
+        env:
+          TF_VAR_location: ${{ env.AZURE_LOCATION }}
+          TF_VAR_resource_group_name: ${{ env.AZURE_RESOURCE_GROUP }}
+          TF_VAR_acr_name: ${{ env.AZURE_ACR_NAME }}
+          TF_VAR_containerapps_environment_name: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
+          TF_VAR_container_app_name: ${{ env.AZURE_CONTAINER_APP_NAME }}
+        run: |
+          echo "=== Terraform plan after import ==="
+          terraform plan
+          echo ""
+          echo "If the plan shows no changes (or only minor changes), the import was successful!"
+          echo "If it shows significant changes, review carefully before applying."

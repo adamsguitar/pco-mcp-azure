@@ -65,6 +65,13 @@ container_image_tag="latest"
 **Changed: "Resolve image settings" step** (lines 27-42)
 - Now reads from `deployment-config.env` instead of `infra/terraform.tfvars`
 
+**REMOVED: "Terraform Import Existing" step** (was lines 80-88)
+- **This was an anti-pattern** - running imports on every deployment is unnecessary
+- Import is a one-time operation for migrating existing resources
+- Once resources are in Terraform state (stored in Azure Storage), they stay there
+- Removed to improve performance and reduce risk of state corruption
+- Created separate manual workflow for one-time imports: `terraform-import-existing.yml`
+
 **Added: "Terraform Plan" step** (new, before apply)
 - Runs `terraform plan -out=tfplan` to preview changes
 - Helps catch errors before apply
@@ -96,7 +103,7 @@ container_image_tag="latest"
 
 ---
 
-### 4. Import Script
+### 4. Import Script and One-Time Migration Workflow
 
 #### [scripts/tf-import-existing.sh](scripts/tf-import-existing.sh)
 - **ADDED**: Import logic for `azurerm_user_assigned_identity.container_app_acr_pull`
@@ -104,6 +111,24 @@ container_image_tag="latest"
 - **REMOVED**: Import logic for `azurerm_container_app.main` (no longer managed)
 
 **Why**: These resources were defined in Terraform but weren't being imported, causing "already exists" errors on re-runs.
+
+#### [.github/workflows/terraform-import-existing.yml](.github/workflows/terraform-import-existing.yml) - **NEW FILE**
+
+A separate manual workflow for one-time resource imports. This workflow:
+- Only runs when manually triggered (`workflow_dispatch`)
+- Requires typing "import" to confirm (safety mechanism)
+- Shows Terraform state before and after import
+- Verifies the plan after import to ensure correctness
+- Should only be used for:
+  - Initial migration of existing infrastructure to Terraform
+  - Adding new Terraform resources that already exist in Azure
+  - State recovery (use with caution)
+
+**Why Create This**:
+- Running imports on every deployment was an anti-pattern
+- Import is a one-time operation, not part of regular deployment
+- Separating concerns: deployment workflow vs. setup/migration workflow
+- Better performance and reduced risk of state corruption
 
 ---
 
@@ -163,25 +188,53 @@ git push origin main
 
 ### Migrating Existing Deployment
 
-If you already have resources deployed from the old configuration:
+If you already have resources deployed from the old configuration, you have two options:
 
-**Option 1: Let Terraform handle it (Recommended)**
+**Option 1: One-Time Import (Recommended for First Migration)**
+
+If this is your very first time running the new workflow and you have existing infrastructure:
+
 ```bash
-# Just push the changes - Terraform will detect drift and fix it
+# 1. Push the code changes first
 git push origin main
 
-# The import script will import existing resources
-# Terraform will remove Container App from state
-# The workflow will then manage the Container App via Azure CLI
+# 2. Go to GitHub Actions → "Terraform Import Existing Resources" workflow
+# 3. Click "Run workflow"
+# 4. Type "import" in the confirmation field
+# 5. Click "Run workflow" button
+
+# This will import all existing resources into Terraform state
+# You only need to do this ONCE
 ```
 
-**Option 2: Manual cleanup (if Option 1 fails)**
+After the import completes, review the Terraform plan output. If it shows no changes (or only minor ones), you're good! The regular deployment workflow will now work correctly.
+
+**Option 2: Let Terraform Create Resources (Clean Slate)**
+
+If you want to start fresh OR if your existing resources are in a failed state:
+
 ```bash
-# 1. Remove Container App from Terraform state manually
+# 1. Delete the failed/old Container App (if it exists)
+az containerapp delete --name ca-pco-mcp-prod --resource-group rg-pco-mcp-prod-eastus --yes
+
+# 2. Remove Container App from Terraform state (if it's there)
+cd infra
+terraform state rm azurerm_container_app.main  # This will fail if not in state - that's OK
+
+# 3. Push the changes
+git push origin main
+
+# The workflow will create everything fresh
+```
+
+**Option 3: Manual State Cleanup (If Options 1-2 Don't Work)**
+
+```bash
+# Remove the Container App from state since we're no longer managing it with Terraform
 cd infra
 terraform state rm azurerm_container_app.main
 
-# 2. Push the changes
+# Push and let the workflow handle it
 git push origin main
 ```
 

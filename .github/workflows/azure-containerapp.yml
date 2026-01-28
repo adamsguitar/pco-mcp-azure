@@ -77,16 +77,6 @@ jobs:
             -backend-config="container_name=${TF_STATE_CONTAINER}" \
             -backend-config="key=terraform.tfstate"
 
-      - name: Terraform Import Existing
-        working-directory: infra
-        env:
-          TF_VAR_location: ${{ env.AZURE_LOCATION }}
-          TF_VAR_resource_group_name: ${{ env.AZURE_RESOURCE_GROUP }}
-          TF_VAR_acr_name: ${{ env.AZURE_ACR_NAME }}
-          TF_VAR_containerapps_environment_name: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
-          TF_VAR_container_app_name: ${{ env.AZURE_CONTAINER_APP_NAME }}
-        run: ../scripts/tf-import-existing.sh
-
       - name: Login to ACR for Docker
         shell: bash
         run: |
@@ -123,15 +113,15 @@ jobs:
           TF_VAR_container_app_name: ${{ env.AZURE_CONTAINER_APP_NAME }}
         run: terraform apply -auto-approve tfplan
 
-      - name: Get User-Assigned Identity Client ID
+      - name: Get User-Assigned Identity
         shell: bash
         run: |
           set -euo pipefail
-          IDENTITY_CLIENT_ID=$(az identity show \
+          IDENTITY_RESOURCE_ID=$(az identity show \
             --name "${AZURE_CONTAINER_APP_NAME}-acr-pull" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query clientId -o tsv)
-          echo "IDENTITY_CLIENT_ID=${IDENTITY_CLIENT_ID}" >> "$GITHUB_ENV"
+            --query id -o tsv)
+          echo "IDENTITY_RESOURCE_ID=${IDENTITY_RESOURCE_ID}" >> "$GITHUB_ENV"
 
       - name: Create or update Container App with secrets
         shell: bash
@@ -195,8 +185,8 @@ jobs:
               --target-port 8080 \
               --ingress external \
               --registry-server "${AZURE_ACR_NAME}.azurecr.io" \
-              --registry-identity "$IDENTITY_CLIENT_ID" \
-              --user-assigned "$IDENTITY_CLIENT_ID" \
+              --registry-identity "$IDENTITY_RESOURCE_ID" \
+              --user-assigned "$IDENTITY_RESOURCE_ID" \
               --secrets \
                 "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
                 "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}" \
