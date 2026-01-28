@@ -180,7 +180,7 @@ jobs:
                 "AUTH0_CLIENT_ID=secretref:auth0-client-id" \
                 "AUTH0_CLIENT_SECRET=secretref:auth0-client-secret" \
                 "AUTH0_AUDIENCE=${{ vars.AUTH0_AUDIENCE }}" \
-                "BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_NAME }}.${{ vars.AZURE_LOCATION }}.azurecontainerapps.io" \
+                "BASE_URL=${{ vars.BASE_URL }}" \
               --cpu 0.5 \
               --memory 1Gi
           else
@@ -207,7 +207,7 @@ jobs:
                 "AUTH0_CLIENT_ID=secretref:auth0-client-id" \
                 "AUTH0_CLIENT_SECRET=secretref:auth0-client-secret" \
                 "AUTH0_AUDIENCE=${{ vars.AUTH0_AUDIENCE }}" \
-                "BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_NAME }}.${{ vars.AZURE_LOCATION }}.azurecontainerapps.io" \
+                "BASE_URL=${{ vars.BASE_URL }}" \
               --cpu 0.5 \
               --memory 1Gi \
               --min-replicas 0 \
