@@ -140,9 +140,30 @@ jobs:
 
           IMAGE_REF="${AZURE_ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
 
-          # Check if Container App exists
+          # Check if Container App exists and get its provisioning state
+          PROVISIONING_STATE=""
           if az containerapp show --name "$AZURE_CONTAINER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" &>/dev/null; then
-            echo "Container App exists - updating..."
+            PROVISIONING_STATE=$(az containerapp show \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Container App exists with provisioning state: $PROVISIONING_STATE"
+          fi
+
+          # If Container App is in Failed state, delete it first
+          if [[ "$PROVISIONING_STATE" == "Failed" ]]; then
+            echo "Container App is in Failed state - deleting and will recreate..."
+            az containerapp delete \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --yes
+            PROVISIONING_STATE=""
+            echo "Deleted failed Container App"
+          fi
+
+          # Create or update based on existence
+          if [[ -n "$PROVISIONING_STATE" && "$PROVISIONING_STATE" == "Succeeded" ]]; then
+            echo "Container App exists and is healthy - updating..."
 
             # Step 1: Update secrets first (before they're referenced)
             echo "Updating secrets..."
