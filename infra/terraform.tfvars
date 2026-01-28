@@ -1,0 +1,6 @@
+location                       = "eastus"
+resource_group_name            = "rg-pco-mcp-prod-eastus"
+acr_name                       = "acrpcomcpprodeus"
+containerapps_environment_name = "cae-pco-mcp-prod"
+container_app_name             = "ca-pco-mcp-prod"
+container_image_name           = "pco-mcp"

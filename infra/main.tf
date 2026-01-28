@@ -44,6 +44,7 @@ resource "azurerm_container_app" "main" {
   resource_group_name          = azurerm_resource_group.main.name
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
+  depends_on                   = [azurerm_role_assignment.container_app_acr_pull]
 
   identity {
     type         = "UserAssigned"
@@ -58,7 +59,7 @@ resource "azurerm_container_app" "main" {
   template {
     container {
       name   = "app"
-      image  = "acrpcomcpprodeus.azurecr.io/ca-poc-mcp-prod:latest"
+      image  = "${azurerm_container_registry.main.login_server}/${var.container_image_name}:${var.container_image_tag}"
       cpu    = 0.5
       memory = "1Gi"
     }
