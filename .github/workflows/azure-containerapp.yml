@@ -163,9 +163,11 @@ jobs:
               --secrets \
                 "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
                 "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}" \
-                "mcp-api-key=${{ secrets.MCP_API_KEY }}"
+                "auth0-client-id=${{ secrets.AUTH0_CLIENT_ID }}" \
+                "auth0-client-secret=${{ secrets.AUTH0_CLIENT_SECRET }}"
 
             # Step 2: Update the container app with new image and env vars
+            # Note: AUTH0_DOMAIN and AUTH0_AUDIENCE are not secrets, just config
             echo "Updating Container App..."
             az containerapp update \
               --name "$AZURE_CONTAINER_APP_NAME" \
@@ -174,7 +176,11 @@ jobs:
               --set-env-vars \
                 "PCO_APPLICATION_ID=secretref:pco-application-id" \
                 "PCO_SECRET_KEY=secretref:pco-secret-key" \
-                "MCP_API_KEY=secretref:mcp-api-key" \
+                "AUTH0_DOMAIN=${{ vars.AUTH0_DOMAIN }}" \
+                "AUTH0_CLIENT_ID=secretref:auth0-client-id" \
+                "AUTH0_CLIENT_SECRET=secretref:auth0-client-secret" \
+                "AUTH0_AUDIENCE=${{ vars.AUTH0_AUDIENCE }}" \
+                "BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_NAME }}.${{ vars.AZURE_LOCATION }}.azurecontainerapps.io" \
               --cpu 0.5 \
               --memory 1Gi
           else
@@ -192,11 +198,16 @@ jobs:
               --secrets \
                 "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
                 "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}" \
-                "mcp-api-key=${{ secrets.MCP_API_KEY }}" \
+                "auth0-client-id=${{ secrets.AUTH0_CLIENT_ID }}" \
+                "auth0-client-secret=${{ secrets.AUTH0_CLIENT_SECRET }}" \
               --env-vars \
                 "PCO_APPLICATION_ID=secretref:pco-application-id" \
                 "PCO_SECRET_KEY=secretref:pco-secret-key" \
-                "MCP_API_KEY=secretref:mcp-api-key" \
+                "AUTH0_DOMAIN=${{ vars.AUTH0_DOMAIN }}" \
+                "AUTH0_CLIENT_ID=secretref:auth0-client-id" \
+                "AUTH0_CLIENT_SECRET=secretref:auth0-client-secret" \
+                "AUTH0_AUDIENCE=${{ vars.AUTH0_AUDIENCE }}" \
+                "BASE_URL=https://${{ vars.AZURE_CONTAINER_APP_NAME }}.${{ vars.AZURE_LOCATION }}.azurecontainerapps.io" \
               --cpu 0.5 \
               --memory 1Gi \
               --min-replicas 0 \

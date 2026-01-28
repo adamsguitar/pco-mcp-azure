@@ -1,7 +1,5 @@
-from fastmcp import FastMCP, Context
-from fastmcp.server.middleware import Middleware, MiddlewareContext
-from fastmcp.exceptions import ToolError
-from fastmcp.server.dependencies import get_http_headers
+from fastmcp import FastMCP
+from fastmcp.server.auth.providers.auth0 import Auth0Provider
 from pypco import PCO  # Import the PCO client
 import os
 from dotenv import load_dotenv
@@ -9,33 +7,24 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Simple API key authentication middleware
-class ApiKeyAuthMiddleware(Middleware):
-    async def on_call_tool(self, context: MiddlewareContext, call_next):
-        api_key = os.getenv("MCP_API_KEY")
+# Configure Auth0 authentication (only if Auth0 is configured)
+auth_provider = None
+auth0_domain = os.getenv("AUTH0_DOMAIN")
+auth0_client_id = os.getenv("AUTH0_CLIENT_ID")
+auth0_client_secret = os.getenv("AUTH0_CLIENT_SECRET")
+auth0_audience = os.getenv("AUTH0_AUDIENCE")
+base_url = os.getenv("BASE_URL")
 
-        # Skip auth if no API key is configured
-        if not api_key:
-            return await call_next(context)
+if all([auth0_domain, auth0_client_id, auth0_client_secret, auth0_audience, base_url]):
+    auth_provider = Auth0Provider(
+        config_url=f"https://{auth0_domain}/.well-known/openid-configuration",
+        client_id=auth0_client_id,
+        client_secret=auth0_client_secret,
+        audience=auth0_audience,
+        base_url=base_url,
+    )
 
-        headers = get_http_headers()
-        auth_header = headers.get("authorization", "")
-
-        if not auth_header:
-            raise ToolError("Access denied: missing authorization header")
-
-        if not auth_header.startswith("Bearer "):
-            raise ToolError("Access denied: invalid authorization format")
-
-        token = auth_header.removeprefix("Bearer ").strip()
-
-        if token != api_key:
-            raise ToolError("Access denied: invalid API key")
-
-        return await call_next(context)
-
-mcp = FastMCP("PCO Services MCP Server")
-mcp.add_middleware(ApiKeyAuthMiddleware())
+mcp = FastMCP("PCO Services MCP Server", auth=auth_provider)
 
 # Initialize the PCO client with credentials from environment variables
 pco = PCO(
