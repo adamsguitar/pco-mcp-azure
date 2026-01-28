@@ -20,30 +20,7 @@ variable "containerapps_environment_name" {
 
 variable "container_app_name" {
   type        = string
-  description = "Azure Container App name"
-}
-
-variable "container_image_name" {
-  type        = string
-  description = "Container image name in ACR (repository name without registry prefix)"
-}
-
-variable "container_image_tag" {
-  type        = string
-  description = "Container image tag"
-  default     = "latest"
-}
-
-variable "container_app_target_port" {
-  type        = number
-  description = "Container App target port"
-  default     = 8080
-}
-
-variable "container_app_ingress_external" {
-  type        = bool
-  description = "Whether to expose the Container App publicly"
-  default     = true
+  description = "Azure Container App name (used for resource naming)"
 }
 
 variable "log_analytics_workspace_name" {

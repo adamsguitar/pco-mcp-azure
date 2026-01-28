@@ -28,11 +28,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tfvars="infra/terraform.tfvars"
-          image_name=$(awk -F'=' '/^container_image_name/ {gsub(/["[:space:]]/, "", $2); print $2}' "$tfvars")
-          image_tag=$(awk -F'=' '/^container_image_tag/ {gsub(/["[:space:]]/, "", $2); print $2}' "$tfvars")
+          config_file="deployment-config.env"
+          image_name=$(awk -F'=' '/^container_image_name/ {gsub(/["[:space:]]/, "", $2); print $2}' "$config_file")
+          image_tag=$(awk -F'=' '/^container_image_tag/ {gsub(/["[:space:]]/, "", $2); print $2}' "$config_file")
           if [[ -z "${image_name}" ]]; then
-            echo "container_image_name not found in $tfvars" >&2
+            echo "container_image_name not found in $config_file" >&2
             exit 1
           fi
           if [[ -z "${image_tag}" ]]; then
@@ -103,6 +103,16 @@ jobs:
           docker build -t "$image_ref" .
           docker push "$image_ref"
 
+      - name: Terraform Plan
+        working-directory: infra
+        env:
+          TF_VAR_location: ${{ env.AZURE_LOCATION }}
+          TF_VAR_resource_group_name: ${{ env.AZURE_RESOURCE_GROUP }}
+          TF_VAR_acr_name: ${{ env.AZURE_ACR_NAME }}
+          TF_VAR_containerapps_environment_name: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
+          TF_VAR_container_app_name: ${{ env.AZURE_CONTAINER_APP_NAME }}
+        run: terraform plan -out=tfplan
+
       - name: Terraform Apply
         working-directory: infra
         env:
@@ -111,20 +121,70 @@ jobs:
           TF_VAR_acr_name: ${{ env.AZURE_ACR_NAME }}
           TF_VAR_containerapps_environment_name: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
           TF_VAR_container_app_name: ${{ env.AZURE_CONTAINER_APP_NAME }}
-          TF_VAR_container_image_name: ${{ env.IMAGE_NAME }}
-          TF_VAR_container_image_tag: ${{ env.IMAGE_TAG }}
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve tfplan
 
-      - name: Build and deploy Container App
-        uses: azure/container-apps-deploy-action@v2
-        with:
-          acrName: ${{ env.AZURE_ACR_NAME }}
-          containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME }}
-          resourceGroup: ${{ env.AZURE_RESOURCE_GROUP }}
-          containerAppEnvironment: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
-          imageToDeploy: ${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          ingress: external
-          targetPort: 8080
-          envVars: |
-            PCO_APPLICATION_ID=${{ secrets.PCO_APPLICATION_ID }}
-            PCO_SECRET_KEY=${{ secrets.PCO_SECRET_KEY }}
+      - name: Get User-Assigned Identity Client ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          IDENTITY_CLIENT_ID=$(az identity show \
+            --name "${AZURE_CONTAINER_APP_NAME}-acr-pull" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query clientId -o tsv)
+          echo "IDENTITY_CLIENT_ID=${IDENTITY_CLIENT_ID}" >> "$GITHUB_ENV"
+
+      - name: Create or update Container App with secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_REF="${AZURE_ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
+
+          # Check if Container App exists
+          if az containerapp show --name "$AZURE_CONTAINER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" &>/dev/null; then
+            echo "Updating existing Container App..."
+            az containerapp update \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --image "$IMAGE_REF" \
+              --set-env-vars \
+                "PCO_APPLICATION_ID=secretref:pco-application-id" \
+                "PCO_SECRET_KEY=secretref:pco-secret-key" \
+              --cpu 0.5 \
+              --memory 1Gi
+          else
+            echo "Creating new Container App..."
+            az containerapp create \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --environment "$AZURE_CONTAINERAPPS_ENVIRONMENT" \
+              --image "$IMAGE_REF" \
+              --target-port 8080 \
+              --ingress external \
+              --registry-server "${AZURE_ACR_NAME}.azurecr.io" \
+              --registry-identity "$IDENTITY_CLIENT_ID" \
+              --user-assigned "$IDENTITY_CLIENT_ID" \
+              --secrets \
+                "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
+                "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}" \
+              --env-vars \
+                "PCO_APPLICATION_ID=secretref:pco-application-id" \
+                "PCO_SECRET_KEY=secretref:pco-secret-key" \
+              --cpu 0.5 \
+              --memory 1Gi \
+              --min-replicas 0 \
+              --max-replicas 10
+          fi
+
+          # Update secrets if app already exists
+          if az containerapp show --name "$AZURE_CONTAINER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" &>/dev/null; then
+            echo "Updating secrets..."
+            az containerapp secret set \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --secrets \
+                "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
+                "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}"
+          fi
+
+          echo "Container App deployment complete"

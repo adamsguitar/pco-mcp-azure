@@ -34,11 +34,20 @@ rg_id=$(az group show --name "$TF_VAR_resource_group_name" --query id -o tsv 2>/
 acr_id=$(az acr show --name "$TF_VAR_acr_name" --resource-group "$TF_VAR_resource_group_name" --query id -o tsv 2>/dev/null || true)
 log_id=$(az monitor log-analytics workspace show --resource-group "$TF_VAR_resource_group_name" --workspace-name "$LOG_ANALYTICS_WORKSPACE_NAME" --query id -o tsv 2>/dev/null || true)
 cae_id=$(az containerapp env show --name "$TF_VAR_containerapps_environment_name" --resource-group "$TF_VAR_resource_group_name" --query id -o tsv 2>/dev/null || true)
-ca_id=$(az containerapp show --name "$TF_VAR_container_app_name" --resource-group "$TF_VAR_resource_group_name" --query id -o tsv 2>/dev/null || true)
+identity_id=$(az identity show --name "${TF_VAR_container_app_name}-acr-pull" --resource-group "$TF_VAR_resource_group_name" --query id -o tsv 2>/dev/null || true)
+
+# Role assignment ID is more complex - we need to find it by scope and principal
+if [[ -n "$acr_id" && -n "$identity_id" ]]; then
+  principal_id=$(az identity show --name "${TF_VAR_container_app_name}-acr-pull" --resource-group "$TF_VAR_resource_group_name" --query principalId -o tsv 2>/dev/null || true)
+  role_assignment_id=$(az role assignment list --scope "$acr_id" --assignee "$principal_id" --role "AcrPull" --query '[0].id' -o tsv 2>/dev/null || true)
+else
+  role_assignment_id=""
+fi
 
 ensure_import azurerm_resource_group.main "$rg_id"
 ensure_import azurerm_container_registry.main "$acr_id"
 ensure_import azurerm_log_analytics_workspace.main "$log_id"
 ensure_import azurerm_container_app_environment.main "$cae_id"
-ensure_import azurerm_container_app.main "$ca_id"
+ensure_import azurerm_user_assigned_identity.container_app_acr_pull "$identity_id"
+ensure_import azurerm_role_assignment.container_app_acr_pull "$role_assignment_id"
 

@@ -39,44 +39,6 @@ resource "azurerm_user_assigned_identity" "container_app_acr_pull" {
   location            = azurerm_resource_group.main.location
 }
 
-resource "azurerm_container_app" "main" {
-  name                         = var.container_app_name
-  resource_group_name          = azurerm_resource_group.main.name
-  container_app_environment_id = azurerm_container_app_environment.main.id
-  revision_mode                = "Single"
-  depends_on                   = [azurerm_role_assignment.container_app_acr_pull]
-
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.container_app_acr_pull.id]
-  }
-
-  registry {
-    server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.container_app_acr_pull.id
-  }
-
-  template {
-    container {
-      name   = "app"
-      image  = "${azurerm_container_registry.main.login_server}/${var.container_image_name}:${var.container_image_tag}"
-      cpu    = 0.5
-      memory = "1Gi"
-    }
-  }
-
-  ingress {
-    external_enabled = var.container_app_ingress_external
-    target_port      = var.container_app_target_port
-    transport        = "auto"
-
-    traffic_weight {
-      percentage      = 100
-      latest_revision = true
-    }
-  }
-}
-
 resource "azurerm_role_assignment" "container_app_acr_pull" {
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPull"
