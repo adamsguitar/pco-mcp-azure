@@ -77,12 +77,21 @@ jobs:
             -backend-config="container_name=${TF_STATE_CONTAINER}" \
             -backend-config="key=terraform.tfstate"
 
+      - name: Login to ACR for Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACR_LOGIN_SERVER="${AZURE_ACR_NAME}.azurecr.io"
+          token=$(az acr login --name "$AZURE_ACR_NAME" --expose-token --output tsv --query accessToken)
+          echo "$token" | docker login "$ACR_LOGIN_SERVER" --username 00000000-0000-0000-0000-000000000000 --password-stdin
+
       - name: Build and push image to ACR
-        uses: azure/CLI@v2
-        with:
-          inlineScript: |
-            set -euo pipefail
-            az acr build -r "$AZURE_ACR_NAME" -t "$IMAGE_NAME:$IMAGE_TAG" .
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="${AZURE_ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
+          docker build -t "$image_ref" .
+          docker push "$image_ref"
 
       - name: Terraform Apply
         working-directory: infra
@@ -99,12 +108,11 @@ jobs:
       - name: Build and deploy Container App
         uses: azure/container-apps-deploy-action@v2
         with:
-          appSourcePath: ${{ github.workspace }}
           acrName: ${{ env.AZURE_ACR_NAME }}
           containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME }}
           resourceGroup: ${{ env.AZURE_RESOURCE_GROUP }}
           containerAppEnvironment: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
-          imageToBuild: ${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          imageToDeploy: ${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           ingress: external
           targetPort: 8080
           envVars: |
