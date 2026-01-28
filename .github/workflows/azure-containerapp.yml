@@ -24,6 +24,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve image settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          tfvars="infra/terraform.tfvars"
+          image_name=$(awk -F'=' '/^container_image_name/ {gsub(/["[:space:]]/, "", $2); print $2}' "$tfvars")
+          image_tag=$(awk -F'=' '/^container_image_tag/ {gsub(/["[:space:]]/, "", $2); print $2}' "$tfvars")
+          if [[ -z "${image_name}" ]]; then
+            echo "container_image_name not found in $tfvars" >&2
+            exit 1
+          fi
+          if [[ -z "${image_tag}" ]]; then
+            image_tag="latest"
+          fi
+          echo "IMAGE_NAME=${image_name}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${image_tag}" >> "$GITHUB_ENV"
+
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -60,6 +77,13 @@ jobs:
             -backend-config="container_name=${TF_STATE_CONTAINER}" \
             -backend-config="key=terraform.tfstate"
 
+      - name: Build and push image to ACR
+        uses: azure/CLI@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            az acr build -r "$AZURE_ACR_NAME" -t "$IMAGE_NAME:$IMAGE_TAG" .
+
       - name: Terraform Apply
         working-directory: infra
         env:
@@ -68,6 +92,8 @@ jobs:
           TF_VAR_acr_name: ${{ env.AZURE_ACR_NAME }}
           TF_VAR_containerapps_environment_name: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
           TF_VAR_container_app_name: ${{ env.AZURE_CONTAINER_APP_NAME }}
+          TF_VAR_container_image_name: ${{ env.IMAGE_NAME }}
+          TF_VAR_container_image_tag: ${{ env.IMAGE_TAG }}
         run: terraform apply -auto-approve
 
       - name: Build and deploy Container App
@@ -78,7 +104,7 @@ jobs:
           containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME }}
           resourceGroup: ${{ env.AZURE_RESOURCE_GROUP }}
           containerAppEnvironment: ${{ env.AZURE_CONTAINERAPPS_ENVIRONMENT }}
-          imageToBuild: ${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ env.AZURE_CONTAINER_APP_NAME }}:${{ github.sha }}
+          imageToBuild: ${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           ingress: external
           targetPort: 8080
           envVars: |
