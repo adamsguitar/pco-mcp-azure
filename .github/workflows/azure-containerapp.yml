@@ -142,7 +142,19 @@ jobs:
 
           # Check if Container App exists
           if az containerapp show --name "$AZURE_CONTAINER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" &>/dev/null; then
-            echo "Updating existing Container App..."
+            echo "Container App exists - updating..."
+
+            # Step 1: Update secrets first (before they're referenced)
+            echo "Updating secrets..."
+            az containerapp secret set \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --secrets \
+                "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
+                "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}"
+
+            # Step 2: Update the container app with new image and env vars
+            echo "Updating Container App..."
             az containerapp update \
               --name "$AZURE_CONTAINER_APP_NAME" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -153,7 +165,7 @@ jobs:
               --cpu 0.5 \
               --memory 1Gi
           else
-            echo "Creating new Container App..."
+            echo "Container App does not exist - creating..."
             az containerapp create \
               --name "$AZURE_CONTAINER_APP_NAME" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -174,17 +186,6 @@ jobs:
               --memory 1Gi \
               --min-replicas 0 \
               --max-replicas 10
-          fi
-
-          # Update secrets if app already exists
-          if az containerapp show --name "$AZURE_CONTAINER_APP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" &>/dev/null; then
-            echo "Updating secrets..."
-            az containerapp secret set \
-              --name "$AZURE_CONTAINER_APP_NAME" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --secrets \
-                "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
-                "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}"
           fi
 
           echo "Container App deployment complete"
