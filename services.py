@@ -100,8 +100,8 @@ class Auth0Middleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# Create FastMCP server
-mcp = FastMCP("PCO Services MCP Server", stateless_http=True)
+# Create FastMCP server (stateless_http set via FASTMCP_STATELESS_HTTP env var)
+mcp = FastMCP("PCO Services MCP Server")
 
 
 # ============== PCO Tools ==============
@@ -243,12 +243,15 @@ def create_app() -> Starlette:
     # Create the MCP HTTP app once - its lifespan manages the session
     mcp_app = mcp.http_app()
 
+    # Get lifespan - use .lifespan if available (fastmcp 2.4+), fallback to router.lifespan_context
+    mcp_lifespan = getattr(mcp_app, "lifespan", None) or mcp_app.router.lifespan_context
+
     # Check if Auth0 is configured
     if not all([AUTH0_DOMAIN, AUTH0_AUDIENCE, BASE_URL]):
         logger.warning("Auth0 not configured - running without authentication")
         return Starlette(
             routes=[Mount("/mcp", app=mcp_app)],
-            lifespan=mcp_app.lifespan,
+            lifespan=mcp_lifespan,
         )
 
     logger.info(f"Auth0 configured: domain={AUTH0_DOMAIN}, audience={AUTH0_AUDIENCE}")
@@ -272,7 +275,7 @@ def create_app() -> Starlette:
             # MCP endpoint (auth required)
             Mount("/mcp", app=mcp_app, middleware=auth_middleware),
         ],
-        lifespan=mcp_app.lifespan,
+        lifespan=mcp_lifespan,
     )
 
 
