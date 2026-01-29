@@ -1,24 +1,16 @@
 """
 PCO Services MCP Server with Auth0 authentication.
-Based on Auth0's official FastMCP integration pattern.
+Uses FastMCP's built-in Auth0Provider for DCR-compatible OAuth.
 """
 from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
 
-import jwt
 from dotenv import load_dotenv
 from fastmcp import FastMCP
-from mcp.server.auth.routes import create_protected_resource_routes
+from fastmcp.server.auth.providers.auth0 import Auth0Provider
 from pypco import PCO
-from starlette.applications import Starlette
-from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-from starlette.routing import Mount, Router
 
 # Load environment variables
 load_dotenv()
@@ -29,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
+AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
+AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
 AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE")
 BASE_URL = os.getenv("BASE_URL")
 PORT = int(os.getenv("PORT", "8080"))
@@ -39,69 +33,22 @@ pco = PCO(
     secret=os.getenv("PCO_SECRET_KEY")
 )
 
+# Set up Auth0 authentication if configured
+auth = None
+if all([AUTH0_DOMAIN, AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_AUDIENCE, BASE_URL]):
+    logger.info(f"Auth0 configured: domain={AUTH0_DOMAIN}, audience={AUTH0_AUDIENCE}")
+    auth = Auth0Provider(
+        config_url=f"https://{AUTH0_DOMAIN}/.well-known/openid-configuration",
+        client_id=AUTH0_CLIENT_ID,
+        client_secret=AUTH0_CLIENT_SECRET,
+        audience=AUTH0_AUDIENCE,
+        base_url=BASE_URL,
+    )
+else:
+    logger.warning("Auth0 not fully configured - running without authentication")
 
-class Auth0Middleware(BaseHTTPMiddleware):
-    """Middleware to verify Auth0 JWT tokens."""
-
-    def __init__(self, app, domain: str, audience: str):
-        super().__init__(app)
-        self.domain = domain
-        self.audience = audience
-        self.jwks_client = None
-        self._jwks_uri = f"https://{domain}/.well-known/jwks.json"
-
-    async def _get_signing_key(self, token: str) -> jwt.PyJWK:
-        """Fetch the signing key from Auth0's JWKS endpoint."""
-        if self.jwks_client is None:
-            self.jwks_client = jwt.PyJWKClient(self._jwks_uri)
-        return self.jwks_client.get_signing_key_from_jwt(token)
-
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Allow OPTIONS requests for CORS
-        if request.method == "OPTIONS":
-            return await call_next(request)
-
-        auth_header = request.headers.get("Authorization", "")
-
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                {"error": "invalid_request", "error_description": "Missing or invalid Authorization header"},
-                status_code=401,
-                headers={"WWW-Authenticate": f'Bearer realm="{self.audience}"'}
-            )
-
-        token = auth_header[7:]  # Remove "Bearer " prefix
-
-        try:
-            signing_key = await self._get_signing_key(token)
-            payload = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["RS256"],
-                audience=self.audience,
-                issuer=f"https://{self.domain}/"
-            )
-            # Store user info in request state for tools to access if needed
-            request.state.user = payload
-        except jwt.ExpiredSignatureError:
-            return JSONResponse(
-                {"error": "invalid_token", "error_description": "Token has expired"},
-                status_code=401,
-                headers={"WWW-Authenticate": f'Bearer realm="{self.audience}", error="invalid_token"'}
-            )
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"Token validation failed: {e}")
-            return JSONResponse(
-                {"error": "invalid_token", "error_description": "Token validation failed"},
-                status_code=401,
-                headers={"WWW-Authenticate": f'Bearer realm="{self.audience}", error="invalid_token"'}
-            )
-
-        return await call_next(request)
-
-
-# Create FastMCP server (stateless_http set via FASTMCP_STATELESS_HTTP env var)
-mcp = FastMCP("PCO Services MCP Server")
+# Create FastMCP server with Auth0 authentication
+mcp = FastMCP("PCO Services MCP Server", auth=auth)
 
 
 # ============== PCO Tools ==============
@@ -235,53 +182,7 @@ def find_songs_by_tags(tag_names: list[str]) -> list:
     return response['data']
 
 
-# ============== Application Setup ==============
-
-def create_app() -> Starlette:
-    """Create the Starlette application with Auth0 authentication."""
-
-    # Create the MCP HTTP app once - its lifespan manages the session
-    mcp_app = mcp.http_app()
-
-    # Get lifespan - use .lifespan if available (fastmcp 2.4+), fallback to router.lifespan_context
-    mcp_lifespan = getattr(mcp_app, "lifespan", None) or mcp_app.router.lifespan_context
-
-    # Check if Auth0 is configured
-    if not all([AUTH0_DOMAIN, AUTH0_AUDIENCE, BASE_URL]):
-        logger.warning("Auth0 not configured - running without authentication")
-        return Starlette(
-            routes=[Mount("/mcp", app=mcp_app)],
-            lifespan=mcp_lifespan,
-        )
-
-    logger.info(f"Auth0 configured: domain={AUTH0_DOMAIN}, audience={AUTH0_AUDIENCE}")
-
-    # Create OAuth protected resource metadata routes
-    metadata_routes = create_protected_resource_routes(
-        resource_url=AUTH0_AUDIENCE,
-        authorization_servers=[f"https://{AUTH0_DOMAIN}"],
-        scopes_supported=["openid", "profile", "email"],
-        resource_name="PCO Services MCP Server",
-    )
-    metadata_router = Router(routes=metadata_routes)
-
-    # Auth middleware
-    auth_middleware = [Middleware(Auth0Middleware, domain=AUTH0_DOMAIN, audience=AUTH0_AUDIENCE)]
-
-    return Starlette(
-        routes=[
-            # OAuth metadata (no auth required)
-            Mount("/", app=metadata_router),
-            # MCP endpoint (auth required)
-            Mount("/mcp", app=mcp_app, middleware=auth_middleware),
-        ],
-        lifespan=mcp_lifespan,
-    )
-
-
-app = create_app()
-
+# ============== Application Entry Point ==============
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    mcp.run(transport="http", host="0.0.0.0", port=PORT)
