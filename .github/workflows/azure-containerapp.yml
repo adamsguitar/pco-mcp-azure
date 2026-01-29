@@ -207,3 +207,52 @@ jobs:
           fi
 
           echo "Container App deployment complete"
+
+      - name: Validate OAuth endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Get the Container App FQDN
+          FQDN=$(az containerapp show \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          echo "Validating OAuth endpoint at https://${FQDN}"
+
+          # Wait for the app to be ready (container apps can take a moment after deployment)
+          MAX_RETRIES=10
+          RETRY_DELAY=5
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i of $MAX_RETRIES..."
+
+            HTTP_STATUS=$(curl -s -o /tmp/oauth-response.json -w "%{http_code}" \
+              "https://${FQDN}/.well-known/oauth-protected-resource" || echo "000")
+
+            if [[ "$HTTP_STATUS" == "200" ]]; then
+              echo "OAuth endpoint returned 200 OK"
+
+              # Validate response contains expected fields
+              if jq -e '.resource' /tmp/oauth-response.json > /dev/null 2>&1; then
+                echo "Response contains 'resource' field"
+                echo "OAuth endpoint validation successful"
+                cat /tmp/oauth-response.json | jq .
+                exit 0
+              else
+                echo "Warning: Response missing expected 'resource' field"
+                cat /tmp/oauth-response.json
+              fi
+            else
+              echo "Got HTTP status: $HTTP_STATUS"
+            fi
+
+            if [[ $i -lt $MAX_RETRIES ]]; then
+              echo "Retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+            fi
+          done
+
+          echo "OAuth endpoint validation failed after $MAX_RETRIES attempts"
+          exit 1
