@@ -236,7 +236,7 @@ jobs:
             echo "Attempt $i of $MAX_RETRIES..."
 
             HTTP_STATUS=$(curl -s -o /tmp/oauth-response.json -w "%{http_code}" \
-              "https://${FQDN}/.well-known/oauth-protected-resource" || echo "000")
+              "https://${FQDN}/.well-known/oauth-protected-resource/mcp" || echo "000")
 
             if [[ "$HTTP_STATUS" == "200" ]]; then
               echo "OAuth endpoint returned 200 OK"
