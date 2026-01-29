@@ -251,7 +251,7 @@ def create_app() -> Starlette:
                 yield
 
         return Starlette(
-            routes=[Mount("/mcp", app=mcp.streamable_http_app())],
+            routes=[Mount("/mcp", app=mcp.http_app())],
             lifespan=lifespan
         )
 
@@ -279,7 +279,7 @@ def create_app() -> Starlette:
             # OAuth metadata (no auth required)
             Mount("/", app=metadata_router),
             # MCP endpoint (auth required)
-            Mount("/mcp", app=mcp.streamable_http_app(), middleware=auth_middleware),
+            Mount("/mcp", app=mcp.http_app(), middleware=auth_middleware),
         ],
         lifespan=lifespan
     )
