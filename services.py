@@ -4,10 +4,9 @@ Based on Auth0's official FastMCP integration pattern.
 """
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 
 import jwt
 from dotenv import load_dotenv
@@ -241,18 +240,15 @@ def find_songs_by_tags(tag_names: list[str]) -> list:
 def create_app() -> Starlette:
     """Create the Starlette application with Auth0 authentication."""
 
+    # Create the MCP HTTP app once - its lifespan manages the session
+    mcp_app = mcp.http_app()
+
     # Check if Auth0 is configured
     if not all([AUTH0_DOMAIN, AUTH0_AUDIENCE, BASE_URL]):
         logger.warning("Auth0 not configured - running without authentication")
-        # Return simple app without auth
-        @contextlib.asynccontextmanager
-        async def lifespan(app: Starlette) -> AsyncIterator[None]:
-            async with mcp.session_manager.run():
-                yield
-
         return Starlette(
-            routes=[Mount("/mcp", app=mcp.http_app())],
-            lifespan=lifespan
+            routes=[Mount("/mcp", app=mcp_app)],
+            lifespan=mcp_app.lifespan,
         )
 
     logger.info(f"Auth0 configured: domain={AUTH0_DOMAIN}, audience={AUTH0_AUDIENCE}")
@@ -269,19 +265,14 @@ def create_app() -> Starlette:
     # Auth middleware
     auth_middleware = [Middleware(Auth0Middleware, domain=AUTH0_DOMAIN, audience=AUTH0_AUDIENCE)]
 
-    @contextlib.asynccontextmanager
-    async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        async with mcp.session_manager.run():
-            yield
-
     return Starlette(
         routes=[
             # OAuth metadata (no auth required)
             Mount("/", app=metadata_router),
             # MCP endpoint (auth required)
-            Mount("/mcp", app=mcp.http_app(), middleware=auth_middleware),
+            Mount("/mcp", app=mcp_app, middleware=auth_middleware),
         ],
-        lifespan=lifespan
+        lifespan=mcp_app.lifespan,
     )
 
 
