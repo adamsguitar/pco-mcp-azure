@@ -1,3 +1,6 @@
 fastmcp
 pypco
-python-dotenv 
+python-dotenv
+starlette
+uvicorn
+PyJWT[crypto] 

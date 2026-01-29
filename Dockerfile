@@ -13,4 +13,4 @@ COPY services.py /app/services.py
 
 EXPOSE 8080
 
-CMD ["fastmcp", "run", "services.py", "--transport", "http", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "services.py"]

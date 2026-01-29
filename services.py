@@ -1,252 +1,226 @@
-from fastmcp import FastMCP
-from fastmcp.server.auth.providers.auth0 import Auth0Provider
-from pypco import PCO  # Import the PCO client
-import os
-from dotenv import load_dotenv
+"""
+PCO Services MCP Server with Auth0 authentication.
+Based on Auth0's official FastMCP integration pattern.
+"""
+from __future__ import annotations
 
-# Load environment variables from .env file
+import contextlib
+import logging
+import os
+from collections.abc import AsyncIterator, Callable
+
+import jwt
+from dotenv import load_dotenv
+from fastmcp import FastMCP
+from mcp.server.auth.routes import create_protected_resource_routes
+from pypco import PCO
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Mount, Router
+
+# Load environment variables
 load_dotenv()
 
-# Configure Auth0 authentication (only if Auth0 is configured)
-auth_provider = None
-auth0_domain = os.getenv("AUTH0_DOMAIN")
-auth0_client_id = os.getenv("AUTH0_CLIENT_ID")
-auth0_client_secret = os.getenv("AUTH0_CLIENT_SECRET")
-auth0_audience = os.getenv("AUTH0_AUDIENCE")
-base_url = os.getenv("BASE_URL")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-if all([auth0_domain, auth0_client_id, auth0_client_secret, auth0_audience, base_url]):
-    auth_provider = Auth0Provider(
-        config_url=f"https://{auth0_domain}/.well-known/openid-configuration",
-        client_id=auth0_client_id,
-        client_secret=auth0_client_secret,
-        audience=auth0_audience,
-        base_url=base_url,
-    )
+# Configuration
+AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
+AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE")
+BASE_URL = os.getenv("BASE_URL")
+PORT = int(os.getenv("PORT", "8080"))
 
-mcp = FastMCP("PCO Services MCP Server", auth=auth_provider)
-
-# Initialize the PCO client with credentials from environment variables
+# Initialize PCO client
 pco = PCO(
     application_id=os.getenv("PCO_APPLICATION_ID"),
     secret=os.getenv("PCO_SECRET_KEY")
 )
 
+
+class Auth0Middleware(BaseHTTPMiddleware):
+    """Middleware to verify Auth0 JWT tokens."""
+
+    def __init__(self, app, domain: str, audience: str):
+        super().__init__(app)
+        self.domain = domain
+        self.audience = audience
+        self.jwks_client = None
+        self._jwks_uri = f"https://{domain}/.well-known/jwks.json"
+
+    async def _get_signing_key(self, token: str) -> jwt.PyJWK:
+        """Fetch the signing key from Auth0's JWKS endpoint."""
+        if self.jwks_client is None:
+            self.jwks_client = jwt.PyJWKClient(self._jwks_uri)
+        return self.jwks_client.get_signing_key_from_jwt(token)
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Allow OPTIONS requests for CORS
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        auth_header = request.headers.get("Authorization", "")
+
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": "Missing or invalid Authorization header"},
+                status_code=401,
+                headers={"WWW-Authenticate": f'Bearer realm="{self.audience}"'}
+            )
+
+        token = auth_header[7:]  # Remove "Bearer " prefix
+
+        try:
+            signing_key = await self._get_signing_key(token)
+            payload = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=self.audience,
+                issuer=f"https://{self.domain}/"
+            )
+            # Store user info in request state for tools to access if needed
+            request.state.user = payload
+        except jwt.ExpiredSignatureError:
+            return JSONResponse(
+                {"error": "invalid_token", "error_description": "Token has expired"},
+                status_code=401,
+                headers={"WWW-Authenticate": f'Bearer realm="{self.audience}", error="invalid_token"'}
+            )
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Token validation failed: {e}")
+            return JSONResponse(
+                {"error": "invalid_token", "error_description": "Token validation failed"},
+                status_code=401,
+                headers={"WWW-Authenticate": f'Bearer realm="{self.audience}", error="invalid_token"'}
+            )
+
+        return await call_next(request)
+
+
+# Create FastMCP server
+mcp = FastMCP("PCO Services MCP Server", stateless_http=True)
+
+
+# ============== PCO Tools ==============
+
 @mcp.tool()
 def get_service_types() -> list:
-    """
-    Fetch a list of service types from the Planning Center Online API.
-    """
-    # Using the direct get method as shown in the documentation
+    """Fetch a list of service types from Planning Center Online."""
     response = pco.get('/services/v2/service_types')
-    # return [service_type['attributes'] for service_type in response['data']]
     return response['data']
+
 
 @mcp.tool()
 def get_plans(service_type_id: str) -> list:
-    """
-    Fetch a list of plans for a specific service type.
-    
-    Args:
-        service_type_id (str): The ID of the service type.
-    """
-    # Using the direct get method as shown in the documentation
+    """Fetch a list of plans for a specific service type."""
     response = pco.get(f'/services/v2/service_types/{service_type_id}/plans?order=-updated_at')
     return response['data']
 
+
 @mcp.tool()
 def get_plan_items(plan_id: str) -> list:
-    """
-    Fetch a list of items for a specific plan.
-    
-    Args:
-        plan_id (str): The ID of the plan.
-    """
-    # Using the direct get method as shown in the documentation
+    """Fetch a list of items for a specific plan."""
     response = pco.get(f'/services/v2/plans/{plan_id}/items')
     return response['data']
 
+
 @mcp.tool()
 def get_plan_team_members(plan_id: str) -> list:
-    """
-    Fetch a list of team members for a specific plan.
-    
-    Args:
-        plan_id (str): The ID of the plan.
-    """
-    # Using the direct get method as shown in the documentation
+    """Fetch a list of team members for a specific plan."""
     response = pco.get(f'/services/v2/plans/{plan_id}/team_members')
     return response['data']
 
-# @mcp.tool()
-# def get_plan_team_member_assignments(plan_id: str, team_member_id: str) -> list:
-#     """
-#     Fetch a list of assignments for a specific team member in a plan.
-    
-#     Args:
-#         plan_id (str): The ID of the plan.
-#         team_member_id (str): The ID of the team member.
-#     """
-#     # Using the direct get method as shown in the documentation
-#     response = pco.get(f'/services/v2/plans/{plan_id}/team_members/{team_member_id}/assignments')
-#     return response['data']
 
 @mcp.tool()
 def get_songs() -> list:
-    """
-    Fetch a list of songs from the Planning Center Online API.
-    """
-    # Using the direct get method as shown in the documentation
+    """Fetch a list of songs from Planning Center Online."""
     response = pco.get('/services/v2/songs?per_page=200&where[hidden]=false')
     return response['data']
 
+
 @mcp.tool()
 def get_all_arrangements_for_song(song_id: str) -> list:
-    """
-    Get a list of all the arrangements for a particular song from the Planning Center Online API.
-
-    Args: 
-        song_id (str): The ID for the song. 
-    """
+    """Get all arrangements for a particular song."""
     response = pco.get(f'/services/v2/songs/{song_id}/arrangements')
     return response['data']
 
+
 @mcp.tool()
 def get_arrangement_for_song(song_id: str, arrangement_id: str) -> list:
-    """
-    Get information for a particular song from the Planning Center Online API.
-
-    Args: 
-        song_id (str): The ID for the song. 
-        arrangement_id (str): The ID for the arrangement within a song. 
-    """
+    """Get information for a particular arrangement."""
     response = pco.get(f'/services/v2/songs/{song_id}/arrangements/{arrangement_id}')
     return response['data']
 
+
 @mcp.tool()
 def get_keys_for_arrangement_of_song(song_id: str, arrangement_id: str) -> list:
-    """
-    Get a list of keys available for a particular song ID and arrangement ID from the Planning Center Online API. 
-
-    Args: 
-        song_id (str): The ID for the song. 
-        arrangement_id (str): The ID for the arrangement within a song. 
-    """
-    response = pco.get(f'/services/v2/songs/{song_id}/arrangements{arrangement_id}/keys')
+    """Get available keys for a particular arrangement."""
+    response = pco.get(f'/services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys')
     return response['data']
+
 
 @mcp.tool()
 def create_song(title: str, ccli: str = None) -> dict:
-    """
-    Create a new song in Planning Center Online.
-
-    Args:
-        title (str): The title of the song.
-        ccli (str, optional): The CCLI number for the song.
-
-    Returns:
-        dict: The created song data.
-    """
+    """Create a new song in Planning Center Online."""
     attributes = {"title": title}
     if ccli:
         attributes["ccli_number"] = ccli
-
     body = pco.template('Song', attributes)
     response = pco.post('/services/v2/songs', body)
     return response['data']
 
+
 @mcp.tool()
 def find_song_by_title(title: str) -> list:
-    """
-    Find songs by title.
-
-    Args:
-        title (str): The title of the song to search for.
-
-    Returns:
-        list: List of songs matching the title.
-    """
+    """Find songs by title."""
     response = pco.get(f'/services/v2/songs?where[title]={title}&where[hidden]=false')
     return response['data']
 
+
 @mcp.tool()
 def get_song(song_id: str) -> dict:
-    """
-    Fetch details for a specific song.
-
-    Args:
-        song_id (str): The ID of the song.
-    """
-    # Using the direct get method as shown in the documentation
+    """Fetch details for a specific song."""
     response = pco.get(f'/services/v2/songs/{song_id}')
     return response['data']
 
+
 @mcp.tool()
 def assign_tags_to_song(song_id: str, tag_names: list[str]) -> dict:
-    """
-    Assign tags to a specific song.
-
-    Args:
-        song_id (str): The ID of the song.
-        tag_names (list[str]): List of tag names to assign to the song.
-
-    Returns:
-        dict: Success status and message.
-    """
-    # Get all tag groups with their tags included
+    """Assign tags to a specific song."""
     tag_groups_response = pco.get('/services/v2/tag_groups?include=tags&filter=song')
-
-    # Extract tags from the included section
     included_tags = tag_groups_response.get('included', [])
 
-    # Find the tag IDs for the requested tag names
     tag_data = []
     for tag_name in tag_names:
         for tag in included_tags:
             if tag['type'] == 'Tag' and tag['attributes']['name'].lower() == tag_name.lower():
-                tag_data.append({
-                    "type": "Tag",
-                    "id": tag['id']
-                })
+                tag_data.append({"type": "Tag", "id": tag['id']})
                 break
 
     if not tag_data:
         return {"success": False, "message": "No matching tags found"}
 
-    # Build the request body
     body = {
         "data": {
             "type": "TagAssignment",
             "attributes": {},
-            "relationships": {
-                "tags": {
-                    "data": tag_data
-                }
-            }
+            "relationships": {"tags": {"data": tag_data}}
         }
     }
-
-    # Make the POST request
-    response = pco.post(f'/services/v2/songs/{song_id}/assign_tags', body)
-
-    # A 204 status means success with no content
+    pco.post(f'/services/v2/songs/{song_id}/assign_tags', body)
     return {"success": True, "message": f"Successfully assigned {len(tag_data)} tag(s) to song {song_id}"}
+
 
 @mcp.tool()
 def find_songs_by_tags(tag_names: list[str]) -> list:
-    """
-    Find songs that have all of the specified tags.
-
-    Args:
-        tag_names (list[str]): List of tag names to filter songs by. Songs must have all specified tags.
-    """
-    # Get all tag groups with their tags included
+    """Find songs that have all of the specified tags."""
     tag_groups_response = pco.get('/services/v2/tag_groups?include=tags&filter=song')
-
-    # Extract tags from the included section
     included_tags = tag_groups_response.get('included', [])
 
-    # Find the tag IDs for the requested tag names
     tag_ids = []
     for tag_name in tag_names:
         for tag in included_tags:
@@ -257,69 +231,63 @@ def find_songs_by_tags(tag_names: list[str]) -> list:
     if not tag_ids:
         return []
 
-    # Build the query string with tag filters
-    # Multiple tag filters create an AND condition
     tag_filters = '&'.join([f'where[song_tag_ids]={tag_id}' for tag_id in tag_ids])
-    query = f'/services/v2/songs?per_page=200&where[hidden]=false&{tag_filters}'
-
-    response = pco.get(query)
+    response = pco.get(f'/services/v2/songs?per_page=200&where[hidden]=false&{tag_filters}')
     return response['data']
 
 
+# ============== Application Setup ==============
+
+def create_app() -> Starlette:
+    """Create the Starlette application with Auth0 authentication."""
+
+    # Check if Auth0 is configured
+    if not all([AUTH0_DOMAIN, AUTH0_AUDIENCE, BASE_URL]):
+        logger.warning("Auth0 not configured - running without authentication")
+        # Return simple app without auth
+        @contextlib.asynccontextmanager
+        async def lifespan(app: Starlette) -> AsyncIterator[None]:
+            async with mcp.session_manager.run():
+                yield
+
+        return Starlette(
+            routes=[Mount("/mcp", app=mcp.streamable_http_app())],
+            lifespan=lifespan
+        )
+
+    logger.info(f"Auth0 configured: domain={AUTH0_DOMAIN}, audience={AUTH0_AUDIENCE}")
+
+    # Create OAuth protected resource metadata routes
+    metadata_routes = create_protected_resource_routes(
+        resource_url=AUTH0_AUDIENCE,
+        authorization_servers=[f"https://{AUTH0_DOMAIN}"],
+        scopes_supported=["openid", "profile", "email"],
+        resource_name="PCO Services MCP Server",
+    )
+    metadata_router = Router(routes=metadata_routes)
+
+    # Auth middleware
+    auth_middleware = [Middleware(Auth0Middleware, domain=AUTH0_DOMAIN, audience=AUTH0_AUDIENCE)]
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        async with mcp.session_manager.run():
+            yield
+
+    return Starlette(
+        routes=[
+            # OAuth metadata (no auth required)
+            Mount("/", app=metadata_router),
+            # MCP endpoint (auth required)
+            Mount("/mcp", app=mcp.streamable_http_app(), middleware=auth_middleware),
+        ],
+        lifespan=lifespan
+    )
+
+
+app = create_app()
+
 
 if __name__ == "__main__":
-    # Example usage of the tools
-    print("PCO Services MCP Server - CLI Test Mode")
-    
-    # Test getting service types
-    print("\nFetching service types...")
-    service_types = get_service_types()
-    print(f"Found {len(service_types)} service types")
-    print(service_types)
-    
-    if service_types:
-        # Test getting plans for the first service type
-        service_type_id = service_types[0].get('id')
-        print(f"\nFetching plans for service type ID: {service_type_id}")
-        plans = get_plans(service_type_id)
-        print(f"Found {len(plans)} plans")
-        
-        if plans:
-            # Test getting plan items for the first plan
-            plan_id = plans[0].get('id')
-            print(f"\nFetching items for plan ID: {plan_id}")
-            items = get_plan_items(plan_id)
-            print(f"Found {len(items)} items")
-            
-            # Test getting team members for the first plan
-            print(f"\nFetching team members for plan ID: {plan_id}")
-            team_members = get_plan_team_members(plan_id)
-            print(f"Found {len(team_members)} team members")
-            
-            if team_members:
-                # Test getting assignments for the first team member
-                team_member_id = team_members[0].get('id')
-                print(f"\nFetching assignments for team member ID: {team_member_id}")
-                # assignments = get_plan_team_member_assignments(plan_id, team_member_id)
-                # print(f"Found {len(assignments)} assignments")
-    
-    # Test getting songs
-    print("\nFetching songs...")
-    songs = get_songs()
-    print(f"Found {len(songs)} songs")
-    
-    if songs:
-        # Test getting details for the first song
-        song_id = songs[0].get('id')
-        print(f"\nFetching details for song ID: {song_id}")
-        song_details = get_song(song_id)
-        print(f"Song details: {song_details.get('title')} by {song_details.get('author')}")
-    
-    # # Test iterating through plans
-    # if service_types:
-    #     service_type_id = service_types[0].get('id')
-    #     print(f"\nIterating through plans for service type ID: {service_type_id}")
-    #     plans = iterate_through_plans(service_type_id)
-    #     print(f"Found {len(plans)} plans through iteration")
-    
-    print("\nCLI test completed.")
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
