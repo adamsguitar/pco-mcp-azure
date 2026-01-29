@@ -162,9 +162,7 @@ jobs:
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --secrets \
                 "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
-                "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}" \
-                "auth0-client-id=${{ secrets.AUTH0_CLIENT_ID }}" \
-                "auth0-client-secret=${{ secrets.AUTH0_CLIENT_SECRET }}"
+                "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}"
 
             # Step 2: Update the container app with new image and env vars
             # Note: AUTH0_DOMAIN and AUTH0_AUDIENCE are not secrets, just config
@@ -177,8 +175,6 @@ jobs:
                 "PCO_APPLICATION_ID=secretref:pco-application-id" \
                 "PCO_SECRET_KEY=secretref:pco-secret-key" \
                 "AUTH0_DOMAIN=${{ vars.AUTH0_DOMAIN }}" \
-                "AUTH0_CLIENT_ID=secretref:auth0-client-id" \
-                "AUTH0_CLIENT_SECRET=secretref:auth0-client-secret" \
                 "AUTH0_AUDIENCE=${{ vars.AUTH0_AUDIENCE }}" \
                 "BASE_URL=${{ vars.BASE_URL }}" \
               --cpu 0.5 \
@@ -198,14 +194,10 @@ jobs:
               --secrets \
                 "pco-application-id=${{ secrets.PCO_APPLICATION_ID }}" \
                 "pco-secret-key=${{ secrets.PCO_SECRET_KEY }}" \
-                "auth0-client-id=${{ secrets.AUTH0_CLIENT_ID }}" \
-                "auth0-client-secret=${{ secrets.AUTH0_CLIENT_SECRET }}" \
               --env-vars \
                 "PCO_APPLICATION_ID=secretref:pco-application-id" \
                 "PCO_SECRET_KEY=secretref:pco-secret-key" \
                 "AUTH0_DOMAIN=${{ vars.AUTH0_DOMAIN }}" \
-                "AUTH0_CLIENT_ID=secretref:auth0-client-id" \
-                "AUTH0_CLIENT_SECRET=secretref:auth0-client-secret" \
                 "AUTH0_AUDIENCE=${{ vars.AUTH0_AUDIENCE }}" \
                 "BASE_URL=${{ vars.BASE_URL }}" \
               --cpu 0.5 \
